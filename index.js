@@ -1,206 +1,112 @@
 const express = require("express");
 const QRCode = require("qrcode");
-const puppeteer = require("puppeteer");
 const { Client, LocalAuth } = require("whatsapp-web.js");
+const path = require("path");
+const fs = require("fs");
 
 const app = express();
 
 const PORT = process.env.PORT || 10000;
-const AUTH_PATH = "/var/data/.wwebjs_auth";
 
-let qrCode = null;
-let whatsappReady = false;
+// --------------------------------------------------
+// STATE
+// --------------------------------------------------
+
 let whatsappStatus = "starting";
+let qrCodeData = null;
 let client = null;
+let initializing = false;
 
+// --------------------------------------------------
+// PERSISTENT WHATSAPP AUTH
+// --------------------------------------------------
 
-// ============================================================
-// MEMORY-OPTIMIZED CHROME FLAGS
-// ============================================================
+const authPath = "/var/data/.wwebjs_auth";
 
-const CHROME_ARGS = [
-    // Required on Render
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
+fs.mkdirSync(authPath, {
+    recursive: true
+});
 
-    // GPU / graphics
-    "--disable-gpu",
-    "--disable-software-rasterizer",
-    "--disable-accelerated-2d-canvas",
-    "--disable-accelerated-video-decode",
-    "--disable-gpu-compositing",
-
-    // Memory
-    "--renderer-process-limit=1",
-    "--disable-site-isolation-trials",
-    "--disable-features=site-per-process",
-    "--in-process-gpu",
-
-    // Disable unnecessary Chrome functionality
-    "--disable-extensions",
-    "--disable-background-networking",
-    "--disable-background-timer-throttling",
-    "--disable-backgrounding-occluded-windows",
-    "--disable-breakpad",
-    "--disable-component-update",
-    "--disable-default-apps",
-    "--disable-domain-reliability",
-    "--disable-features=Translate,BackForwardCache",
-    "--disable-hang-monitor",
-    "--disable-ipc-flooding-protection",
-    "--disable-notifications",
-    "--disable-popup-blocking",
-    "--disable-prompt-on-repost",
-    "--disable-renderer-backgrounding",
-    "--disable-sync",
-    "--disable-translate",
-    "--metrics-recording-only",
-    "--mute-audio",
-    "--no-first-run",
-    "--no-default-browser-check",
-
-    // Avoid unnecessary disk/cache activity
-    "--disk-cache-size=1",
-    "--media-cache-size=1",
-
-    // Disable unnecessary networking features
-    "--disable-quic",
-    "--disable-http2",
-
-    // WhatsApp does not need these
-    "--autoplay-policy=user-gesture-required",
-
-    // Keep Chrome from trying to use a desktop
-    "--headless=new"
-];
-
-
-// ============================================================
-// WEB DASHBOARD
-// ============================================================
+// --------------------------------------------------
+// EXPRESS
+// --------------------------------------------------
 
 app.get("/", (req, res) => {
-
-    const statusClass = whatsappReady
-        ? "connected"
-        : "waiting";
-
     res.send(`
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
     <title>WhatsApp Bot</title>
-
     <style>
-
-        * {
-            box-sizing: border-box;
-        }
-
         body {
             margin: 0;
-            padding: 40px 20px;
             background: #111;
             color: white;
             font-family: Arial, sans-serif;
-        }
-
-        .container {
-            width: 100%;
-            max-width: 550px;
-            margin: 0 auto;
-            background: #1c1c1c;
-            border-radius: 14px;
-            padding: 35px;
             text-align: center;
         }
 
+        .box {
+            margin: 60px auto;
+            max-width: 700px;
+            background: #1d1d1d;
+            padding: 40px;
+            border-radius: 16px;
+        }
+
         h1 {
-            margin-top: 0;
             margin-bottom: 25px;
         }
 
         .status {
-            font-size: 20px;
-            margin-bottom: 25px;
+            font-size: 22px;
         }
 
-        .connected {
-            color: #25D366;
+        .starting {
+            color: orange;
         }
 
-        .waiting {
-            color: #ffd166;
+        .ready {
+            color: #00ff88;
         }
 
-        .button {
-            display: inline-block;
-            background: #25D366;
-            color: white;
-            padding: 13px 22px;
-            border-radius: 8px;
-            text-decoration: none;
-            margin-top: 15px;
+        .error {
+            color: #ff5555;
         }
 
-        .button:hover {
-            background: #20bd5a;
+        a {
+            color: #00ff88;
         }
-
-        .small {
-            color: #aaa;
-            font-size: 14px;
-            margin-top: 25px;
-        }
-
     </style>
-
 </head>
 
 <body>
 
-<div class="container">
+<div class="box">
 
     <h1>WhatsApp Bot</h1>
 
     <div class="status">
         Status:
-        <strong class="${statusClass}">
+        <strong class="${
+            whatsappStatus === "ready"
+                ? "ready"
+                : whatsappStatus.includes("failed")
+                ? "error"
+                : "starting"
+        }">
             ${whatsappStatus}
         </strong>
     </div>
 
-    ${
-        qrCode
-            ? `
-                <p>
-                    WhatsApp is waiting for you to scan the QR code.
-                </p>
-
-                <a class="button" href="/qr">
-                    Open QR Code
-                </a>
-              `
-            : ""
-    }
+    <br>
 
     ${
-        whatsappReady
-            ? `
-                <p class="connected">
-                    WhatsApp is connected.
-                </p>
-              `
-            : ""
+        whatsappStatus === "ready"
+            ? "<p>WhatsApp is connected.</p>"
+            : `<p><a href="/qr">Open QR page</a></p>`
     }
-
-    <p class="small">
-        Memory-optimized WhatsApp Web.js server
-    </p>
 
 </div>
 
@@ -210,150 +116,364 @@ app.get("/", (req, res) => {
 });
 
 
-// ============================================================
-// QR CODE PAGE
-// ============================================================
+// --------------------------------------------------
+// QR PAGE
+// --------------------------------------------------
 
 app.get("/qr", async (req, res) => {
 
-    if (!qrCode) {
-
+    if (!qrCodeData) {
         return res.send(`
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <title>WhatsApp QR</title>
-</head>
-
-<body style="
+<title>WhatsApp QR</title>
+<style>
+body {
     background:#111;
     color:white;
     font-family:Arial;
     text-align:center;
-    padding:50px;
-">
+    padding-top:100px;
+}
+</style>
+</head>
+<body>
 
-<h1>QR Code Not Available</h1>
+<h1>WhatsApp QR</h1>
+
+<p>QR code is not currently available.</p>
+
+<p>Status: <strong>${whatsappStatus}</strong></p>
 
 <p>
-    WhatsApp is either starting or already connected.
-</p>
-
-<p>
-    Refresh this page in a few seconds.
-</p>
-
-<p>
-    <a href="/" style="color:#25D366;">
-        Back
-    </a>
+<a style="color:#00ff88" href="/qr">
+Refresh
+</a>
 </p>
 
 </body>
 </html>
         `);
-
     }
 
     try {
 
-        const image = await QRCode.toDataURL(qrCode, {
-            margin: 1,
-            width: 350
+        const image = await QRCode.toDataURL(qrCodeData, {
+            margin: 2,
+            width: 360
         });
 
         res.send(`
 <!DOCTYPE html>
 <html>
-
 <head>
-    <meta charset="UTF-8">
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
+<title>WhatsApp QR</title>
 
-    <title>WhatsApp QR</title>
-</head>
+<meta http-equiv="refresh" content="15">
 
-<body style="
+<style>
+
+body {
     background:#111;
     color:white;
     font-family:Arial;
     text-align:center;
-    padding:30px;
-">
+}
+
+.container {
+    margin-top:40px;
+}
+
+img {
+    background:white;
+    padding:15px;
+    border-radius:12px;
+}
+
+a {
+    color:#00ff88;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="container">
 
 <h1>Scan WhatsApp QR Code</h1>
 
 <p>
-    WhatsApp → Linked devices → Link a device
+WhatsApp → Linked devices → Link a device
 </p>
 
-<div style="
-    display:inline-block;
-    background:white;
-    padding:12px;
-    border-radius:10px;
-    margin-top:15px;
-">
+<img src="${image}">
 
-<img
-    src="${image}"
-    style="
-        width:350px;
-        max-width:80vw;
-        display:block;
-    "
->
-
-</div>
-
-<p style="margin-top:25px;color:#aaa;">
-    If the QR expires, refresh this page.
+<p>
+QR refreshes automatically.
 </p>
 
 <p>
-    <a href="/" style="color:#25D366;">
-        Back to status
-    </a>
+<a href="/">Back to status</a>
 </p>
 
-</body>
+</div>
 
+</body>
 </html>
         `);
 
-    } catch (error) {
+    } catch (err) {
 
-        console.error("QR generation failed:", error);
+        console.error("QR rendering error:", err);
 
-        res.status(500).send("Could not generate QR code.");
-
+        res.status(500).send("Could not generate QR.");
     }
-
 });
 
 
-// ============================================================
-// HEALTH ENDPOINT
-// ============================================================
+// --------------------------------------------------
+// STATUS API
+// --------------------------------------------------
 
-app.get("/health", (req, res) => {
+app.get("/status", (req, res) => {
 
     res.json({
-        server: "running",
-        whatsapp: whatsappStatus,
-        ready: whatsappReady
+        status: whatsappStatus,
+        authenticated: whatsappStatus === "authenticated",
+        ready: whatsappStatus === "ready"
     });
 
 });
 
 
-// ============================================================
-// SERVER
-// ============================================================
+// --------------------------------------------------
+// WHATSAPP CLIENT
+// --------------------------------------------------
+
+function createWhatsAppClient() {
+
+    if (initializing) {
+        return;
+    }
+
+    initializing = true;
+
+    console.log("----------------------------------------");
+    console.log("Starting WhatsApp client...");
+    console.log("Auth path:", authPath);
+    console.log("----------------------------------------");
+
+    whatsappStatus = "initializing";
+
+    client = new Client({
+
+        authStrategy: new LocalAuth({
+            dataPath: authPath,
+            clientId: "main"
+        }),
+
+        puppeteer: {
+
+            headless: true,
+
+            args: [
+
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+
+                "--disable-dev-shm-usage",
+
+                "--disable-gpu",
+
+                "--disable-software-rasterizer",
+
+                "--disable-extensions",
+
+                "--disable-background-networking",
+
+                "--disable-background-timer-throttling",
+
+                "--disable-backgrounding-occluded-windows",
+
+                "--disable-renderer-backgrounding",
+
+                "--disable-features=Translate,BackForwardCache",
+
+                "--no-first-run",
+                "--no-default-browser-check",
+
+                "--disable-sync",
+
+                "--disable-notifications",
+
+                "--mute-audio"
+
+            ]
+        }
+    });
+
+
+    // --------------------------------------------------
+    // QR
+    // --------------------------------------------------
+
+    client.on("qr", (qr) => {
+
+        console.log("QR CODE RECEIVED");
+
+        qrCodeData = qr;
+
+        whatsappStatus = "waiting for QR scan";
+
+    });
+
+
+    // --------------------------------------------------
+    // AUTHENTICATED
+    // --------------------------------------------------
+
+    client.on("authenticated", () => {
+
+        console.log("----------------------------------------");
+        console.log("WHATSAPP AUTHENTICATED");
+        console.log("----------------------------------------");
+
+        whatsappStatus = "authenticated";
+
+        qrCodeData = null;
+
+    });
+
+
+    // --------------------------------------------------
+    // READY
+    // --------------------------------------------------
+
+    client.on("ready", () => {
+
+        console.log("----------------------------------------");
+        console.log("WHATSAPP CLIENT READY");
+        console.log("----------------------------------------");
+
+        whatsappStatus = "ready";
+
+        qrCodeData = null;
+
+    });
+
+
+    // --------------------------------------------------
+    // LOADING
+    // --------------------------------------------------
+
+    client.on("loading_screen", (percent, message) => {
+
+        console.log(
+            `WhatsApp loading: ${percent}% - ${message}`
+        );
+
+        whatsappStatus = `loading ${percent}%`;
+
+    });
+
+
+    // --------------------------------------------------
+    // AUTH FAILURE
+    // --------------------------------------------------
+
+    client.on("auth_failure", (message) => {
+
+        console.error("----------------------------------------");
+        console.error("WHATSAPP AUTH FAILURE");
+        console.error(message);
+        console.error("----------------------------------------");
+
+        whatsappStatus = "authentication failed";
+
+    });
+
+
+    // --------------------------------------------------
+    // DISCONNECTED
+    // --------------------------------------------------
+
+    client.on("disconnected", (reason) => {
+
+        console.error("----------------------------------------");
+        console.error("WHATSAPP DISCONNECTED");
+        console.error(reason);
+        console.error("----------------------------------------");
+
+        whatsappStatus = `disconnected: ${reason}`;
+
+        initializing = false;
+
+    });
+
+
+    // --------------------------------------------------
+    // MESSAGE
+    // --------------------------------------------------
+
+    client.on("message", async (message) => {
+
+        console.log(
+            "MESSAGE:",
+            message.from,
+            message.body
+        );
+
+        // Simple test command
+        if (message.body === "!ping") {
+
+            try {
+
+                await message.reply("pong");
+
+                console.log("Sent pong");
+
+            } catch (err) {
+
+                console.error(
+                    "Failed to reply:",
+                    err.message
+                );
+
+            }
+
+        }
+
+    });
+
+
+    // --------------------------------------------------
+    // INITIALIZE
+    // --------------------------------------------------
+
+    console.log("Initializing WhatsApp...");
+
+    client.initialize().catch((err) => {
+
+        console.error("----------------------------------------");
+        console.error("WHATSAPP INITIALIZATION FAILED");
+        console.error(err);
+        console.error("----------------------------------------");
+
+        whatsappStatus = "startup failed";
+
+        initializing = false;
+
+    });
+
+}
+
+
+// --------------------------------------------------
+// START HTTP SERVER FIRST
+// --------------------------------------------------
 
 app.listen(PORT, "0.0.0.0", () => {
 
@@ -361,264 +481,6 @@ app.listen(PORT, "0.0.0.0", () => {
     console.log(`HTTP server running on port ${PORT}`);
     console.log("----------------------------------------");
 
+    createWhatsAppClient();
+
 });
-
-
-// ============================================================
-// WHATSAPP
-// ============================================================
-
-async function startWhatsApp() {
-
-    try {
-
-        console.log("");
-        console.log("========================================");
-        console.log("Starting WhatsApp client...");
-        console.log("========================================");
-
-        console.log(`WhatsApp auth path: ${AUTH_PATH}`);
-
-
-        // --------------------------------------------------------
-        // FIND CHROME
-        // --------------------------------------------------------
-
-        const chromePath = await puppeteer.executablePath();
-
-        console.log(`Puppeteer Chrome path: ${chromePath}`);
-
-
-        if (
-            !chromePath ||
-            typeof chromePath !== "string"
-        ) {
-
-            throw new Error(
-                `Invalid Chrome executable path: ${chromePath}`
-            );
-
-        }
-
-
-        // --------------------------------------------------------
-        // CREATE CLIENT
-        // --------------------------------------------------------
-
-        client = new Client({
-
-            authStrategy: new LocalAuth({
-                dataPath: AUTH_PATH
-            }),
-
-            puppeteer: {
-
-                executablePath: chromePath,
-
-                headless: true,
-
-                args: CHROME_ARGS,
-
-                defaultViewport: {
-                    width: 800,
-                    height: 600
-                },
-
-                timeout: 120000
-
-            }
-
-        });
-
-
-        // --------------------------------------------------------
-        // QR
-        // --------------------------------------------------------
-
-        client.on("qr", (qr) => {
-
-            qrCode = qr;
-
-            whatsappReady = false;
-
-            whatsappStatus = "waiting for QR scan";
-
-            console.log("");
-            console.log("========================================");
-            console.log("WHATSAPP QR CODE READY");
-            console.log("========================================");
-
-            console.log("");
-            console.log(
-                "Open /qr on your Render URL."
-            );
-
-            console.log("");
-
-        });
-
-
-        // --------------------------------------------------------
-        // AUTHENTICATED
-        // --------------------------------------------------------
-
-        client.on("authenticated", () => {
-
-            console.log("WhatsApp authenticated.");
-
-            qrCode = null;
-
-            whatsappStatus = "authenticated";
-
-        });
-
-
-        // --------------------------------------------------------
-        // READY
-        // --------------------------------------------------------
-
-        client.on("ready", () => {
-
-            whatsappReady = true;
-
-            whatsappStatus = "connected";
-
-            qrCode = null;
-
-            console.log("");
-            console.log("========================================");
-            console.log("WHATSAPP CONNECTED");
-            console.log("========================================");
-            console.log("");
-
-        });
-
-
-        // --------------------------------------------------------
-        // AUTH FAILURE
-        // --------------------------------------------------------
-
-        client.on("auth_failure", (message) => {
-
-            whatsappReady = false;
-
-            whatsappStatus = "authentication failed";
-
-            console.error("");
-            console.error("WHATSAPP AUTHENTICATION FAILED");
-            console.error(message);
-            console.error("");
-
-        });
-
-
-        // --------------------------------------------------------
-        // DISCONNECTED
-        // --------------------------------------------------------
-
-        client.on("disconnected", (reason) => {
-
-            whatsappReady = false;
-
-            whatsappStatus = "disconnected";
-
-            console.log("");
-            console.log("WHATSAPP DISCONNECTED");
-            console.log(reason);
-            console.log("");
-
-        });
-
-
-        // --------------------------------------------------------
-        // MESSAGE HANDLER
-        // --------------------------------------------------------
-
-        client.on("message", async (message) => {
-
-            try {
-
-                console.log(
-                    `[MESSAGE] ${message.from}: ${message.body}`
-                );
-
-
-                if (
-                    typeof message.body === "string" &&
-                    message.body.trim().toLowerCase() === "ping"
-                ) {
-
-                    await message.reply("pong");
-
-                    console.log(
-                        `[REPLY] pong -> ${message.from}`
-                    );
-
-                }
-
-            } catch (error) {
-
-                console.error(
-                    "Message handler error:",
-                    error
-                );
-
-            }
-
-        });
-
-
-        // --------------------------------------------------------
-        // INITIALIZE
-        // --------------------------------------------------------
-
-        console.log("");
-        console.log("Initializing WhatsApp...");
-        console.log("");
-
-        await client.initialize();
-
-    } catch (error) {
-
-        whatsappReady = false;
-
-        whatsappStatus = "startup failed";
-
-        console.error("");
-        console.error("========================================");
-        console.error("WHATSAPP STARTUP FAILED");
-        console.error("========================================");
-        console.error(error);
-        console.error("");
-
-    }
-
-}
-
-
-// ============================================================
-// START
-// ============================================================
-
-startWhatsApp();
-
-
-// ============================================================
-// MEMORY MONITOR
-// ============================================================
-//
-// This doesn't consume significant memory.
-// It lets us see what Node itself is using before Render
-// potentially kills the process.
-//
-
-setInterval(() => {
-
-    const memory = process.memoryUsage();
-
-    console.log(
-        `[MEMORY] RSS=${Math.round(memory.rss / 1024 / 1024)}MB ` +
-        `Heap=${Math.round(memory.heapUsed / 1024 / 1024)}MB`
-    );
-
-}, 60000);
