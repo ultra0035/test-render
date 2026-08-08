@@ -14,7 +14,7 @@ let whatsappStatus = "starting";
 
 
 // ============================================================
-// HTTP SERVER
+// WEB SERVER
 // ============================================================
 
 app.get("/", (req, res) => {
@@ -31,16 +31,16 @@ app.get("/", (req, res) => {
             margin: 0;
             padding: 40px 20px;
             background: #111;
-            color: #fff;
+            color: white;
             font-family: Arial, sans-serif;
             text-align: center;
         }
 
         .container {
-            max-width: 500px;
+            max-width: 560px;
             margin: auto;
             background: #1c1c1c;
-            padding: 30px;
+            padding: 35px;
             border-radius: 15px;
         }
 
@@ -93,7 +93,8 @@ app.get("/", (req, res) => {
     ${
         qrCode
             ? `
-                <p>WhatsApp is waiting for you to scan the QR code.</p>
+                <p>WhatsApp is waiting for a QR scan.</p>
+
                 <a class="button" href="/qr">
                     Open QR Code
                 </a>
@@ -120,7 +121,7 @@ app.get("/", (req, res) => {
 
 
 // ============================================================
-// QR CODE PAGE
+// QR CODE
 // ============================================================
 
 app.get("/qr", async (req, res) => {
@@ -139,17 +140,17 @@ app.get("/qr", async (req, res) => {
     color:white;
     font-family:Arial;
     text-align:center;
-    padding:40px;
+    padding:50px;
 ">
 
     <h1>No QR Code Available</h1>
 
     <p>
-        WhatsApp may already be connected.
+        WhatsApp is either still starting or already connected.
     </p>
 
     <p>
-        Refresh this page if WhatsApp is still starting.
+        Refresh this page.
     </p>
 
     <a href="/" style="color:#25D366;">
@@ -182,15 +183,14 @@ app.get("/qr", async (req, res) => {
     padding:30px;
 ">
 
-    <h1>Scan QR Code</h1>
+    <h1>Scan WhatsApp QR Code</h1>
 
     <p>
-        Open WhatsApp on your phone.
+        On your phone open:
     </p>
 
     <p>
-        Go to <strong>Linked devices</strong> →
-        <strong>Link a device</strong>
+        <strong>WhatsApp → Linked devices → Link a device</strong>
     </p>
 
     <div style="
@@ -214,7 +214,7 @@ app.get("/qr", async (req, res) => {
     </div>
 
     <p style="margin-top:25px;">
-        QR codes expire. Refresh the page if this one expires.
+        If the QR code expires, refresh this page.
     </p>
 
     <p>
@@ -252,7 +252,7 @@ app.get("/health", (req, res) => {
 
 
 // ============================================================
-// START HTTP SERVER
+// START SERVER
 // ============================================================
 
 app.listen(PORT, "0.0.0.0", () => {
@@ -265,190 +265,231 @@ app.listen(PORT, "0.0.0.0", () => {
 
 
 // ============================================================
-// WHATSAPP CLIENT
+// START WHATSAPP
 // ============================================================
 
-console.log("Starting WhatsApp client...");
-console.log(`WhatsApp auth path: ${AUTH_PATH}`);
+async function startWhatsApp() {
 
-console.log(
-    `Puppeteer Chrome path: ${puppeteer.executablePath()}`
-);
+    try {
 
+        console.log("Starting WhatsApp client...");
+        console.log(`WhatsApp auth path: ${AUTH_PATH}`);
 
-const client = new Client({
+        /*
+         * IMPORTANT:
+         *
+         * In the Puppeteer version being installed by Render,
+         * executablePath() returns a Promise.
+         *
+         * We MUST await it before giving the path to
+         * whatsapp-web.js.
+         */
 
-    authStrategy: new LocalAuth({
-        dataPath: AUTH_PATH
-    }),
+        const chromePath = await puppeteer.executablePath();
 
-    puppeteer: {
+        console.log(`Puppeteer Chrome path: ${chromePath}`);
 
-        executablePath: puppeteer.executablePath(),
+        if (!chromePath || typeof chromePath !== "string") {
 
-        headless: true,
-
-        args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-extensions",
-            "--no-first-run",
-            "--no-zygote"
-        ]
-
-    }
-
-});
-
-
-// ============================================================
-// QR EVENT
-// ============================================================
-
-client.on("qr", (qr) => {
-
-    qrCode = qr;
-
-    whatsappReady = false;
-
-    whatsappStatus = "waiting for QR scan";
-
-    console.log("");
-    console.log("========================================");
-    console.log("WHATSAPP QR CODE READY");
-    console.log("========================================");
-    console.log("");
-    console.log("Open:");
-    console.log("/qr");
-    console.log("");
-
-});
-
-
-// ============================================================
-// AUTHENTICATED
-// ============================================================
-
-client.on("authenticated", () => {
-
-    console.log("WhatsApp authenticated.");
-
-    whatsappStatus = "authenticated";
-
-    qrCode = null;
-
-});
-
-
-// ============================================================
-// READY
-// ============================================================
-
-client.on("ready", () => {
-
-    whatsappReady = true;
-
-    whatsappStatus = "connected";
-
-    qrCode = null;
-
-    console.log("");
-    console.log("========================================");
-    console.log("WHATSAPP CONNECTED");
-    console.log("========================================");
-    console.log("");
-
-});
-
-
-// ============================================================
-// AUTH FAILURE
-// ============================================================
-
-client.on("auth_failure", (message) => {
-
-    whatsappReady = false;
-
-    whatsappStatus = "authentication failed";
-
-    console.error("");
-    console.error("WHATSAPP AUTHENTICATION FAILED");
-    console.error(message);
-    console.error("");
-
-});
-
-
-// ============================================================
-// DISCONNECTED
-// ============================================================
-
-client.on("disconnected", (reason) => {
-
-    whatsappReady = false;
-
-    whatsappStatus = "disconnected";
-
-    console.log("");
-    console.log("WHATSAPP DISCONNECTED");
-    console.log(reason);
-    console.log("");
-
-});
-
-
-// ============================================================
-// INCOMING MESSAGE
-// ============================================================
-
-client.on("message", async (message) => {
-
-    console.log(
-        `[MESSAGE] ${message.from}: ${message.body}`
-    );
-
-    if (
-        typeof message.body === "string" &&
-        message.body.trim().toLowerCase() === "ping"
-    ) {
-
-        try {
-
-            await message.reply("pong");
-
-            console.log(
-                `[REPLY] pong sent to ${message.from}`
-            );
-
-        } catch (error) {
-
-            console.error(
-                "Failed to send reply:",
-                error
+            throw new Error(
+                `Invalid Chrome executable path: ${chromePath}`
             );
 
         }
 
+
+        // ------------------------------------------------------
+        // CREATE WHATSAPP CLIENT
+        // ------------------------------------------------------
+
+        const client = new Client({
+
+            authStrategy: new LocalAuth({
+                dataPath: AUTH_PATH
+            }),
+
+            puppeteer: {
+
+                executablePath: chromePath,
+
+                headless: true,
+
+                args: [
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--no-first-run",
+                    "--no-zygote"
+                ]
+
+            }
+
+        });
+
+
+        // ------------------------------------------------------
+        // QR CODE
+        // ------------------------------------------------------
+
+        client.on("qr", (qr) => {
+
+            qrCode = qr;
+
+            whatsappReady = false;
+
+            whatsappStatus = "waiting for QR scan";
+
+            console.log("");
+            console.log("========================================");
+            console.log("WHATSAPP QR CODE READY");
+            console.log("========================================");
+            console.log("");
+            console.log("Open your Render URL:");
+            console.log("/qr");
+            console.log("");
+
+        });
+
+
+        // ------------------------------------------------------
+        // AUTHENTICATED
+        // ------------------------------------------------------
+
+        client.on("authenticated", () => {
+
+            console.log("WhatsApp authenticated.");
+
+            whatsappStatus = "authenticated";
+
+            qrCode = null;
+
+        });
+
+
+        // ------------------------------------------------------
+        // READY
+        // ------------------------------------------------------
+
+        client.on("ready", () => {
+
+            whatsappReady = true;
+
+            whatsappStatus = "connected";
+
+            qrCode = null;
+
+            console.log("");
+            console.log("========================================");
+            console.log("WHATSAPP CONNECTED");
+            console.log("========================================");
+            console.log("");
+
+        });
+
+
+        // ------------------------------------------------------
+        // AUTH FAILURE
+        // ------------------------------------------------------
+
+        client.on("auth_failure", (message) => {
+
+            whatsappReady = false;
+
+            whatsappStatus = "authentication failed";
+
+            console.error("");
+            console.error("WHATSAPP AUTHENTICATION FAILED");
+            console.error(message);
+            console.error("");
+
+        });
+
+
+        // ------------------------------------------------------
+        // DISCONNECTED
+        // ------------------------------------------------------
+
+        client.on("disconnected", (reason) => {
+
+            whatsappReady = false;
+
+            whatsappStatus = "disconnected";
+
+            console.log("");
+            console.log("WHATSAPP DISCONNECTED");
+            console.log(reason);
+            console.log("");
+
+        });
+
+
+        // ------------------------------------------------------
+        // INCOMING MESSAGE
+        // ------------------------------------------------------
+
+        client.on("message", async (message) => {
+
+            console.log(
+                `[MESSAGE] ${message.from}: ${message.body}`
+            );
+
+            if (
+                typeof message.body === "string" &&
+                message.body.trim().toLowerCase() === "ping"
+            ) {
+
+                try {
+
+                    await message.reply("pong");
+
+                    console.log(
+                        `[REPLY] pong sent to ${message.from}`
+                    );
+
+                } catch (error) {
+
+                    console.error(
+                        "Failed to send reply:",
+                        error
+                    );
+
+                }
+
+            }
+
+        });
+
+
+        // ------------------------------------------------------
+        // INITIALIZE
+        // ------------------------------------------------------
+
+        console.log("Initializing WhatsApp...");
+
+        await client.initialize();
+
+    } catch (error) {
+
+        whatsappReady = false;
+
+        whatsappStatus = "startup failed";
+
+        console.error("");
+        console.error("========================================");
+        console.error("WHATSAPP STARTUP FAILED");
+        console.error("========================================");
+        console.error(error);
+        console.error("");
+
     }
 
-});
+}
 
 
 // ============================================================
-// INITIALIZE WHATSAPP
+// RUN
 // ============================================================
 
-client.initialize().catch((error) => {
-
-    whatsappReady = false;
-
-    whatsappStatus = "startup failed";
-
-    console.error("");
-    console.error("WHATSAPP STARTUP FAILED");
-    console.error(error);
-    console.error("");
-
-});
+startWhatsApp();
