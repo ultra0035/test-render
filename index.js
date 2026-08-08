@@ -1,10 +1,5 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const fs = require('fs');
-
-// Check where the browser is actually located (helps debugging)
-const chromePath = '/usr/bin/chromium';
-console.log(`Checking for browser at: ${chromePath} -> ${fs.existsSync(chromePath) ? 'FOUND' : 'NOT FOUND'}`);
 
 const client = new Client({
     authStrategy: new LocalAuth({
@@ -12,29 +7,24 @@ const client = new Client({
     }),
     puppeteer: {
         headless: true,
+        // The Dockerfile installs chromium to /usr/bin/chromium
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--single-process'
         ],
-        executablePath: chromePath
     }
 });
 
 client.on('qr', (qr) => {
-    console.log('QR RECEIVED. Scan this:');
+    console.log('QR RECEIVED:');
     qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
-    console.log('Client is ready!');
+    console.log('Bot is online and ready!');
 });
 
-client.on('auth_failure', msg => {
-    console.error('AUTHENTICATION FAILURE', msg);
-});
-
-client.initialize().catch(err => {
-    console.error('FAILED TO INITIALIZE CLIENT', err);
-});
+client.initialize();
