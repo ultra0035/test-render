@@ -7,7 +7,7 @@ const client = new Client({
     }),
     puppeteer: {
         headless: true,
-        // The Dockerfile installs chromium to /usr/bin/chromium
+        // This matches the path in your Dockerfile
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         args: [
             '--no-sandbox',
@@ -18,13 +18,29 @@ const client = new Client({
     }
 });
 
+// THIS IS THE SNIPPET YOU ASKED ABOUT:
 client.on('qr', (qr) => {
-    console.log('QR RECEIVED:');
+    // 1. Prints the text version (the one that looks broken)
     qrcode.generate(qr, { small: true });
+
+    // 2. Prints a clickable link (the one that works!)
+    console.log('---------------------------------------------------------');
+    console.log('IF THE QR ABOVE IS DISTORTED, OPEN THIS LINK:');
+    console.log(`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`);
+    console.log('---------------------------------------------------------');
 });
 
 client.on('ready', () => {
-    console.log('Bot is online and ready!');
+    console.log('SUCCESS: The bot is logged in and ready!');
 });
 
-client.initialize();
+// Test command to make sure it works
+client.on('message', msg => {
+    if (msg.body.toLowerCase() === 'ping') {
+        msg.reply('pong');
+    }
+});
+
+client.initialize().catch(err => {
+    console.error('INITIALIZATION ERROR:', err);
+});
