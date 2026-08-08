@@ -6,51 +6,127 @@ const { Client, LocalAuth } = require("whatsapp-web.js");
 const app = express();
 
 const PORT = process.env.PORT || 10000;
-const AUTH_PATH = process.env.WA_AUTH_PATH || "/var/data/.wwebjs_auth";
+const AUTH_PATH = "/var/data/.wwebjs_auth";
 
 let qrCode = null;
 let whatsappReady = false;
 let whatsappStatus = "starting";
+let client = null;
 
 
 // ============================================================
-// WEB SERVER
+// MEMORY-OPTIMIZED CHROME FLAGS
+// ============================================================
+
+const CHROME_ARGS = [
+    // Required on Render
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+
+    // GPU / graphics
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-accelerated-2d-canvas",
+    "--disable-accelerated-video-decode",
+    "--disable-gpu-compositing",
+
+    // Memory
+    "--renderer-process-limit=1",
+    "--disable-site-isolation-trials",
+    "--disable-features=site-per-process",
+    "--in-process-gpu",
+
+    // Disable unnecessary Chrome functionality
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-breakpad",
+    "--disable-component-update",
+    "--disable-default-apps",
+    "--disable-domain-reliability",
+    "--disable-features=Translate,BackForwardCache",
+    "--disable-hang-monitor",
+    "--disable-ipc-flooding-protection",
+    "--disable-notifications",
+    "--disable-popup-blocking",
+    "--disable-prompt-on-repost",
+    "--disable-renderer-backgrounding",
+    "--disable-sync",
+    "--disable-translate",
+    "--metrics-recording-only",
+    "--mute-audio",
+    "--no-first-run",
+    "--no-default-browser-check",
+
+    // Avoid unnecessary disk/cache activity
+    "--disk-cache-size=1",
+    "--media-cache-size=1",
+
+    // Disable unnecessary networking features
+    "--disable-quic",
+    "--disable-http2",
+
+    // WhatsApp does not need these
+    "--autoplay-policy=user-gesture-required",
+
+    // Keep Chrome from trying to use a desktop
+    "--headless=new"
+];
+
+
+// ============================================================
+// WEB DASHBOARD
 // ============================================================
 
 app.get("/", (req, res) => {
+
+    const statusClass = whatsappReady
+        ? "connected"
+        : "waiting";
+
     res.send(`
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>WhatsApp Bot</title>
 
     <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             margin: 0;
             padding: 40px 20px;
             background: #111;
             color: white;
             font-family: Arial, sans-serif;
-            text-align: center;
         }
 
         .container {
-            max-width: 560px;
-            margin: auto;
+            width: 100%;
+            max-width: 550px;
+            margin: 0 auto;
             background: #1c1c1c;
+            border-radius: 14px;
             padding: 35px;
-            border-radius: 15px;
+            text-align: center;
         }
 
         h1 {
             margin-top: 0;
+            margin-bottom: 25px;
         }
 
         .status {
             font-size: 20px;
-            margin: 25px 0;
+            margin-bottom: 25px;
         }
 
         .connected {
@@ -63,18 +139,26 @@ app.get("/", (req, res) => {
 
         .button {
             display: inline-block;
-            padding: 14px 25px;
             background: #25D366;
             color: white;
-            text-decoration: none;
+            padding: 13px 22px;
             border-radius: 8px;
+            text-decoration: none;
             margin-top: 15px;
         }
 
         .button:hover {
             background: #20bd5a;
         }
+
+        .small {
+            color: #aaa;
+            font-size: 14px;
+            margin-top: 25px;
+        }
+
     </style>
+
 </head>
 
 <body>
@@ -85,7 +169,7 @@ app.get("/", (req, res) => {
 
     <div class="status">
         Status:
-        <strong class="${whatsappReady ? "connected" : "waiting"}">
+        <strong class="${statusClass}">
             ${whatsappStatus}
         </strong>
     </div>
@@ -93,7 +177,9 @@ app.get("/", (req, res) => {
     ${
         qrCode
             ? `
-                <p>WhatsApp is waiting for a QR scan.</p>
+                <p>
+                    WhatsApp is waiting for you to scan the QR code.
+                </p>
 
                 <a class="button" href="/qr">
                     Open QR Code
@@ -112,6 +198,10 @@ app.get("/", (req, res) => {
             : ""
     }
 
+    <p class="small">
+        Memory-optimized WhatsApp Web.js server
+    </p>
+
 </div>
 
 </body>
@@ -121,12 +211,13 @@ app.get("/", (req, res) => {
 
 
 // ============================================================
-// QR CODE
+// QR CODE PAGE
 // ============================================================
 
 app.get("/qr", async (req, res) => {
 
     if (!qrCode) {
+
         return res.send(`
 <!DOCTYPE html>
 <html>
@@ -143,36 +234,47 @@ app.get("/qr", async (req, res) => {
     padding:50px;
 ">
 
-    <h1>No QR Code Available</h1>
+<h1>QR Code Not Available</h1>
 
-    <p>
-        WhatsApp is either still starting or already connected.
-    </p>
+<p>
+    WhatsApp is either starting or already connected.
+</p>
 
-    <p>
-        Refresh this page.
-    </p>
+<p>
+    Refresh this page in a few seconds.
+</p>
 
+<p>
     <a href="/" style="color:#25D366;">
         Back
     </a>
+</p>
 
 </body>
 </html>
         `);
+
     }
 
     try {
 
-        const image = await QRCode.toDataURL(qrCode);
+        const image = await QRCode.toDataURL(qrCode, {
+            margin: 1,
+            width: 350
+        });
 
         res.send(`
 <!DOCTYPE html>
 <html>
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp QR Code</title>
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>WhatsApp QR</title>
 </head>
 
 <body style="
@@ -183,61 +285,59 @@ app.get("/qr", async (req, res) => {
     padding:30px;
 ">
 
-    <h1>Scan WhatsApp QR Code</h1>
+<h1>Scan WhatsApp QR Code</h1>
 
-    <p>
-        On your phone open:
-    </p>
+<p>
+    WhatsApp → Linked devices → Link a device
+</p>
 
-    <p>
-        <strong>WhatsApp → Linked devices → Link a device</strong>
-    </p>
+<div style="
+    display:inline-block;
+    background:white;
+    padding:12px;
+    border-radius:10px;
+    margin-top:15px;
+">
 
-    <div style="
-        display:inline-block;
-        background:white;
-        padding:15px;
-        border-radius:10px;
-        margin-top:20px;
-    ">
+<img
+    src="${image}"
+    style="
+        width:350px;
+        max-width:80vw;
+        display:block;
+    "
+>
 
-        <img
-            src="${image}"
-            alt="WhatsApp QR Code"
-            style="
-                width:350px;
-                max-width:80vw;
-                display:block;
-            "
-        >
+</div>
 
-    </div>
+<p style="margin-top:25px;color:#aaa;">
+    If the QR expires, refresh this page.
+</p>
 
-    <p style="margin-top:25px;">
-        If the QR code expires, refresh this page.
-    </p>
-
-    <p>
-        <a href="/" style="color:#25D366;">
-            Back to status
-        </a>
-    </p>
+<p>
+    <a href="/" style="color:#25D366;">
+        Back to status
+    </a>
+</p>
 
 </body>
+
 </html>
         `);
 
     } catch (error) {
 
-        console.error("QR generation error:", error);
+        console.error("QR generation failed:", error);
 
-        res.status(500).send("Failed to generate QR code.");
+        res.status(500).send("Could not generate QR code.");
+
     }
+
 });
 
 
 // ============================================================
-// HEALTH CHECK
+// HEALTH ENDPOINT
 // ============================================================
 
 app.get("/health", (req, res) => {
@@ -252,7 +352,7 @@ app.get("/health", (req, res) => {
 
 
 // ============================================================
-// START SERVER
+// SERVER
 // ============================================================
 
 app.listen(PORT, "0.0.0.0", () => {
@@ -265,31 +365,34 @@ app.listen(PORT, "0.0.0.0", () => {
 
 
 // ============================================================
-// START WHATSAPP
+// WHATSAPP
 // ============================================================
 
 async function startWhatsApp() {
 
     try {
 
+        console.log("");
+        console.log("========================================");
         console.log("Starting WhatsApp client...");
+        console.log("========================================");
+
         console.log(`WhatsApp auth path: ${AUTH_PATH}`);
 
-        /*
-         * IMPORTANT:
-         *
-         * In the Puppeteer version being installed by Render,
-         * executablePath() returns a Promise.
-         *
-         * We MUST await it before giving the path to
-         * whatsapp-web.js.
-         */
+
+        // --------------------------------------------------------
+        // FIND CHROME
+        // --------------------------------------------------------
 
         const chromePath = await puppeteer.executablePath();
 
         console.log(`Puppeteer Chrome path: ${chromePath}`);
 
-        if (!chromePath || typeof chromePath !== "string") {
+
+        if (
+            !chromePath ||
+            typeof chromePath !== "string"
+        ) {
 
             throw new Error(
                 `Invalid Chrome executable path: ${chromePath}`
@@ -298,11 +401,11 @@ async function startWhatsApp() {
         }
 
 
-        // ------------------------------------------------------
-        // CREATE WHATSAPP CLIENT
-        // ------------------------------------------------------
+        // --------------------------------------------------------
+        // CREATE CLIENT
+        // --------------------------------------------------------
 
-        const client = new Client({
+        client = new Client({
 
             authStrategy: new LocalAuth({
                 dataPath: AUTH_PATH
@@ -314,24 +417,23 @@ async function startWhatsApp() {
 
                 headless: true,
 
-                args: [
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-extensions",
-                    "--no-first-run",
-                    "--no-zygote"
-                ]
+                args: CHROME_ARGS,
+
+                defaultViewport: {
+                    width: 800,
+                    height: 600
+                },
+
+                timeout: 120000
 
             }
 
         });
 
 
-        // ------------------------------------------------------
-        // QR CODE
-        // ------------------------------------------------------
+        // --------------------------------------------------------
+        // QR
+        // --------------------------------------------------------
 
         client.on("qr", (qr) => {
 
@@ -345,32 +447,35 @@ async function startWhatsApp() {
             console.log("========================================");
             console.log("WHATSAPP QR CODE READY");
             console.log("========================================");
+
             console.log("");
-            console.log("Open your Render URL:");
-            console.log("/qr");
+            console.log(
+                "Open /qr on your Render URL."
+            );
+
             console.log("");
 
         });
 
 
-        // ------------------------------------------------------
+        // --------------------------------------------------------
         // AUTHENTICATED
-        // ------------------------------------------------------
+        // --------------------------------------------------------
 
         client.on("authenticated", () => {
 
             console.log("WhatsApp authenticated.");
 
-            whatsappStatus = "authenticated";
-
             qrCode = null;
+
+            whatsappStatus = "authenticated";
 
         });
 
 
-        // ------------------------------------------------------
+        // --------------------------------------------------------
         // READY
-        // ------------------------------------------------------
+        // --------------------------------------------------------
 
         client.on("ready", () => {
 
@@ -389,9 +494,9 @@ async function startWhatsApp() {
         });
 
 
-        // ------------------------------------------------------
+        // --------------------------------------------------------
         // AUTH FAILURE
-        // ------------------------------------------------------
+        // --------------------------------------------------------
 
         client.on("auth_failure", (message) => {
 
@@ -407,9 +512,9 @@ async function startWhatsApp() {
         });
 
 
-        // ------------------------------------------------------
+        // --------------------------------------------------------
         // DISCONNECTED
-        // ------------------------------------------------------
+        // --------------------------------------------------------
 
         client.on("disconnected", (reason) => {
 
@@ -425,48 +530,51 @@ async function startWhatsApp() {
         });
 
 
-        // ------------------------------------------------------
-        // INCOMING MESSAGE
-        // ------------------------------------------------------
+        // --------------------------------------------------------
+        // MESSAGE HANDLER
+        // --------------------------------------------------------
 
         client.on("message", async (message) => {
 
-            console.log(
-                `[MESSAGE] ${message.from}: ${message.body}`
-            );
+            try {
 
-            if (
-                typeof message.body === "string" &&
-                message.body.trim().toLowerCase() === "ping"
-            ) {
+                console.log(
+                    `[MESSAGE] ${message.from}: ${message.body}`
+                );
 
-                try {
+
+                if (
+                    typeof message.body === "string" &&
+                    message.body.trim().toLowerCase() === "ping"
+                ) {
 
                     await message.reply("pong");
 
                     console.log(
-                        `[REPLY] pong sent to ${message.from}`
-                    );
-
-                } catch (error) {
-
-                    console.error(
-                        "Failed to send reply:",
-                        error
+                        `[REPLY] pong -> ${message.from}`
                     );
 
                 }
+
+            } catch (error) {
+
+                console.error(
+                    "Message handler error:",
+                    error
+                );
 
             }
 
         });
 
 
-        // ------------------------------------------------------
+        // --------------------------------------------------------
         // INITIALIZE
-        // ------------------------------------------------------
+        // --------------------------------------------------------
 
+        console.log("");
         console.log("Initializing WhatsApp...");
+        console.log("");
 
         await client.initialize();
 
@@ -489,7 +597,28 @@ async function startWhatsApp() {
 
 
 // ============================================================
-// RUN
+// START
 // ============================================================
 
 startWhatsApp();
+
+
+// ============================================================
+// MEMORY MONITOR
+// ============================================================
+//
+// This doesn't consume significant memory.
+// It lets us see what Node itself is using before Render
+// potentially kills the process.
+//
+
+setInterval(() => {
+
+    const memory = process.memoryUsage();
+
+    console.log(
+        `[MEMORY] RSS=${Math.round(memory.rss / 1024 / 1024)}MB ` +
+        `Heap=${Math.round(memory.heapUsed / 1024 / 1024)}MB`
+    );
+
+}, 60000);
