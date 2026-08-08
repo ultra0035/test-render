@@ -1,5 +1,10 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const fs = require('fs');
+
+// Check where the browser is actually located (helps debugging)
+const chromePath = '/usr/bin/chromium';
+console.log(`Checking for browser at: ${chromePath} -> ${fs.existsSync(chromePath) ? 'FOUND' : 'NOT FOUND'}`);
 
 const client = new Client({
     authStrategy: new LocalAuth({
@@ -11,30 +16,25 @@ const client = new Client({
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu'
+            '--single-process'
         ],
-        executablePath: '/usr/bin/google-chrome-stable',
+        executablePath: chromePath
     }
 });
 
 client.on('qr', (qr) => {
-    console.log('SCAN THIS QR CODE IN YOUR RAILWAY LOGS:');
+    console.log('QR RECEIVED. Scan this:');
     qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
-    console.log('SUCCESS: Client is ready!');
+    console.log('Client is ready!');
 });
 
-// Basic test command
-client.on('message', msg => {
-    if (msg.body === '!ping') {
-        msg.reply('pong');
-    }
+client.on('auth_failure', msg => {
+    console.error('AUTHENTICATION FAILURE', msg);
 });
 
-client.initialize();
+client.initialize().catch(err => {
+    console.error('FAILED TO INITIALIZE CLIENT', err);
+});
