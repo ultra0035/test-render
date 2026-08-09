@@ -1,16 +1,17 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 
 const SESSION_PATH = './sessions';
 
-// FIX for "Lock" Error Code 21
-if (fs.existsSync(path.join(SESSION_PATH, 'Default/SingletonLock'))) {
+// 1. CLEAR LOCK (Prevents Error Code 21)
+const lockPath = path.join(SESSION_PATH, 'Default', 'SingletonLock');
+if (fs.existsSync(lockPath)) {
     try {
-        fs.unlinkSync(path.join(SESSION_PATH, 'Default/SingletonLock'));
-        console.log('Removed old Chromium lock.');
-    } catch (e) {}
+        fs.unlinkSync(lockPath);
+    } catch (e) {
+        // Log is fine, but we just want it gone
+    }
 }
 
 const client = new Client({
@@ -18,18 +19,27 @@ const client = new Client({
     puppeteer: {
         headless: true,
         executablePath: '/usr/bin/chromium',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process']
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--single-process'
+        ],
     }
 });
 
 client.on('qr', (qr) => {
-    // Prints clickable link for scanning
-    console.log('---------------------------------------------------------');
-    console.log('SCAN THIS LINK IN YOUR BROWSER:');
+    // DO NOT SCAN THE TERMINAL. 
+    // CLICK THIS LINK INSTEAD:
+    console.log('\n\n=========================================================');
+    console.log('1. COPY THIS URL AND OPEN IT IN YOUR BROWSER:');
     console.log(`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`);
-    console.log('---------------------------------------------------------');
-    qrcode.generate(qr, { small: true });
+    console.log('2. SCAN THE IMAGE THAT APPEARS ON THAT WEBPAGE.');
+    console.log('=========================================================\n\n');
 });
 
-client.on('ready', () => console.log('BOT IS READY!'));
+client.on('ready', () => {
+    console.log('SUCCESS: BOT IS READY!');
+});
+
 client.initialize();
