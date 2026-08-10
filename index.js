@@ -4,11 +4,20 @@ const path = require('path');
 
 const SESSION_PATH = '/app/sessions';
 
-// Cleanup locks
-const lockPath = path.join(SESSION_PATH, 'Default', 'SingletonLock');
-if (fs.existsSync(lockPath)) {
-  try { fs.unlinkSync(lockPath); } catch (e) {}
+// Recursively remove any leftover Chromium lock files
+function clearLocks(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir)) {
+    const fullPath = path.join(dir, entry);
+    const stat = fs.statSync(fullPath);
+    if (stat.isDirectory()) {
+      clearLocks(fullPath);
+    } else if (entry === 'SingletonLock' || entry === 'SingletonSocket' || entry === 'SingletonCookie') {
+      try { fs.unlinkSync(fullPath); } catch (e) {}
+    }
+  }
 }
+clearLocks(SESSION_PATH);
 
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: SESSION_PATH }),
