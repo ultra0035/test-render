@@ -1,6 +1,6 @@
 FROM node:18
 
-# Install only the browser libraries (the rest is already in this image)
+# Install Chromium and browser libraries
 RUN apt-get update && apt-get install -y \
     chromium \
     libnss3 \
@@ -15,11 +15,18 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
+# Set the path for Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
+
+# Copy and Install
 COPY package*.json ./
 RUN npm install
+
+# Copy code
 COPY . .
+
+# Start
 CMD ["node", "index.js"]
