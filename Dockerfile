@@ -1,9 +1,7 @@
-FROM node:18-slim
+FROM node:18
 
-# Install EVERYTHING needed for a server-side browser and git-downloading
+# Install only the browser libraries (the rest is already in this image)
 RUN apt-get update && apt-get install -y \
-    git \
-    openssh-client \
     chromium \
     libnss3 \
     libatk1.0-0 \
