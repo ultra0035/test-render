@@ -7,24 +7,30 @@ const SESSION_PATH = '/app/sessions';
 // Cleanup locks
 const lockPath = path.join(SESSION_PATH, 'Default', 'SingletonLock');
 if (fs.existsSync(lockPath)) {
-    try { fs.unlinkSync(lockPath); } catch (e) {}
+  try { fs.unlinkSync(lockPath); } catch (e) {}
 }
 
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: SESSION_PATH }),
-    puppeteer: {
-        headless: true,
-        executablePath: '/usr/bin/chromium',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process']
-    }
+  authStrategy: new LocalAuth({ dataPath: SESSION_PATH }),
+  puppeteer: {
+    headless: true,
+    executablePath: '/usr/bin/chromium',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--single-process']
+  }
 });
 
 client.on('qr', (qr) => {
-    console.log('\n--- SCAN THIS LINK ---\n');
-    console.log(`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`);
-    console.log('\n----------------------\n');
+  console.log('\n--- SCAN THIS LINK ---\n');
+  console.log(`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`);
+  console.log('\n-----------------------\n');
 });
 
 client.on('ready', () => console.log('SUCCESS: BOT IS READY!'));
+
+client.on('message', async (msg) => {
+  if (msg.body === 'test') {
+    await msg.reply('test complete');
+  }
+});
 
 client.initialize();
