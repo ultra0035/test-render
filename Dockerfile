@@ -1,8 +1,9 @@
 FROM node:18-slim
 
-# We added 'git' to the start of this list so Railway can download the WhatsApp fix
+# Install EVERYTHING needed for a server-side browser and git-downloading
 RUN apt-get update && apt-get install -y \
     git \
+    openssh-client \
     chromium \
     libnss3 \
     libatk1.0-0 \
