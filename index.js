@@ -20,8 +20,11 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => {
-    console.log('\nSCAN THIS LINK:\n', `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`, '\n');
+    console.log('\n--- SCAN THIS LINK ---\n');
+    console.log(`https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`);
+    console.log('\n----------------------\n');
 });
 
 client.on('ready', () => console.log('SUCCESS: BOT IS READY!'));
+
 client.initialize();
