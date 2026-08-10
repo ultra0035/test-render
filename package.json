@@ -6,7 +6,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "whatsapp-web.js": "git+https://github.com/pedroslopez/whatsapp-web.js.git#webpack-exodus",
+    "whatsapp-web.js": "https://github.com/pedroslopez/whatsapp-web.js/tarball/webpack-exodus",
     "qrcode-terminal": "^0.12.0"
   }
 }
