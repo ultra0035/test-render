@@ -1,11 +1,19 @@
 const express = require('express');
 const qrcode = require('qrcode');
 const { Client, LocalAuth } = require('whatsapp-web.js');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
+app.use(express.json());
+
 let qrImageData = null;
 let isReady = false;
 
+// --- Gemini setup ---
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+// --- WhatsApp client setup ---
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '/app/.wwebjs_auth' }),
     puppeteer: {
@@ -43,9 +51,28 @@ client.on('disconnected', (reason) => {
     console.log('Client disconnected:', reason);
 });
 
+// --- The chatbot logic ---
+client.on('message', async (msg) => {
+    if (msg.fromMe) return;          // ignore the bot's own messages
+    if (msg.from.includes('@g.us')) return; // ignore group chats (optional)
+
+    console.log(`Incoming from ${msg.from}: ${msg.body}`);
+
+    try {
+        const result = await model.generateContent(msg.body);
+        const replyText = result.response.text();
+
+        await msg.reply(replyText);
+        console.log(`Replied to ${msg.from}: ${replyText}`);
+    } catch (err) {
+        console.error('Gemini error:', err.message);
+        await msg.reply("Sorry, I'm having trouble responding right now.");
+    }
+});
+
 client.initialize();
 
-// Route to view the QR code
+// --- Routes ---
 app.get('/qr', (req, res) => {
     if (isReady) {
         return res.send('<h2>Already authenticated ✅</h2>');
@@ -69,5 +96,5 @@ app.get('/status', (req, res) => {
     res.json({ ready: isReady });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
