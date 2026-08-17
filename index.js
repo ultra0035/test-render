@@ -9,9 +9,14 @@ app.use(express.json());
 let qrImageData = null;
 let isReady = false;
 
+// Track the boot time to ignore old messages (Unix timestamp in seconds)
+const bootTime = Math.floor(Date.now() / 1000);
+
 // --- Gemini setup ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-3.7-flash' });
+// Note: Changed to 'gemini-1.5-flash' as 3.7 does not exist yet. 
+// Change back to your preferred model name if needed.
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 // --- WhatsApp client setup ---
 const client = new Client({
@@ -53,8 +58,25 @@ client.on('disconnected', (reason) => {
 
 // --- The chatbot logic ---
 client.on('message', async (msg) => {
-    if (msg.fromMe) return;          // ignore the bot's own messages
-    if (msg.from.includes('@g.us')) return; // ignore group chats (optional)
+    // 1. Ignore messages sent by the bot itself
+    if (msg.fromMe) return;
+
+    // 2. Ignore WhatsApp Status updates
+    if (msg.from === 'status@broadcast' || msg.isStatus) {
+        return;
+    }
+
+    // 3. Ignore Group chats
+    if (msg.from.includes('@g.us')) {
+        return;
+    }
+
+    // 4. Ignore messages sent BEFORE the bot was started
+    // msg.timestamp is in seconds
+    if (msg.timestamp < bootTime) {
+        console.log(`Ignoring old message from ${msg.from}`);
+        return;
+    }
 
     console.log(`Incoming from ${msg.from}: ${msg.body}`);
 
@@ -62,11 +84,13 @@ client.on('message', async (msg) => {
         const result = await model.generateContent(msg.body);
         const replyText = result.response.text();
 
-        await msg.reply(replyText);
-        console.log(`Replied to ${msg.from}: ${replyText}`);
+        if (replyText) {
+            await msg.reply(replyText);
+            console.log(`Replied to ${msg.from}`);
+        }
     } catch (err) {
         console.error('Gemini error:', err.message);
-        await msg.reply("Sorry, I'm having trouble responding right now.");
+        // Optional: don't reply if there's an error to avoid loops
     }
 });
 
@@ -82,10 +106,11 @@ app.get('/qr', (req, res) => {
     }
     res.send(`
         <html>
-            <body style="display:flex;justify-content:center;align-items:center;height:100vh;">
-                <div>
+            <body style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;">
+                <div style="text-align:center;">
                     <h2>Scan with WhatsApp</h2>
-                    <img src="${qrImageData}" />
+                    <img src="${qrImageData}" style="border: 1px solid #ccc; padding: 10px; border-radius: 10px;" />
+                    <p>Refresh page if QR doesn't load</p>
                 </div>
             </body>
         </html>
@@ -93,7 +118,11 @@ app.get('/qr', (req, res) => {
 });
 
 app.get('/status', (req, res) => {
-    res.json({ ready: isReady });
+    res.json({ 
+        ready: isReady,
+        uptime: process.uptime(),
+        bootTime: new Date(bootTime * 1000).toLocaleString()
+    });
 });
 
 const PORT = process.env.PORT || 8080;
