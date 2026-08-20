@@ -8,18 +8,16 @@ app.use(express.json());
 
 let qrImageData = null;
 let isReady = false;
-
-// Boot time to ignore old messages
 const bootTime = Math.floor(Date.now() / 1000);
 
-// --- OpenAI setup ---
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// --- WhatsApp client setup ---
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '/app/.wwebjs_auth' }),
+    webVersionCache: {
+        type: 'remote',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+    },
     puppeteer: {
         headless: true,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
@@ -30,68 +28,90 @@ const client = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
+            '--single-process', // Saves memory
             '--disable-gpu'
         ]
     }
 });
 
-client.on('qr', async (qr) => {
-    qrImageData = await qrcode.toDataURL(qr);
-    console.log('New QR generated — visit /qr to scan');
+// --- Event Handlers ---
+
+client.on('qr', (qr) => {
+    qrcode.toDataURL(qr).then(url => {
+        qrImageData = url;
+        console.log('--- NEW QR GENERATED ---');
+    });
 });
 
 client.on('ready', () => {
     isReady = true;
     qrImageData = null;
-    console.log('WhatsApp client is ready!');
+    console.log('✅ Bot is online and listening for messages');
 });
 
-client.on('authenticated', () => console.log('Authenticated successfully'));
+client.on('authenticated', () => console.log('👍 Authenticated with WhatsApp'));
+
+client.on('auth_failure', msg => console.error('❌ Auth failure:', msg));
+
 client.on('disconnected', (reason) => {
     isReady = false;
-    console.log('Client disconnected:', reason);
+    console.log('🔌 Client disconnected, restarting...', reason);
+    client.initialize(); // Try to reconnect
 });
 
-// --- Chatbot logic ---
+// --- Chat Logic ---
+
 client.on('message', async (msg) => {
-    if (msg.fromMe) return; 
-    if (msg.from === 'status@broadcast' || msg.isStatus) return;
+    // Basic Filters
+    if (msg.fromMe) return;
+    if (msg.isStatus || msg.from === 'status@broadcast') return;
     if (msg.from.includes('@g.us')) return; 
     
-    if (msg.timestamp < bootTime) return;
-
-    console.log(`Message from ${msg.from}: ${msg.body}`);
+    // Ignore old messages (with 5 second buffer)
+    if (msg.timestamp < (bootTime - 5)) return;
 
     try {
+        console.log(`📩 New message from ${msg.from}`);
+        
         const completion = await openai.chat.completions.create({
-            model: "gpt-4o-mini", // Fast and cheap
+            model: "gpt-4o-mini",
             messages: [
-                { role: "system", content: "You are a helpful WhatsApp assistant." },
+                { role: "system", content: "You are a helpful assistant." },
                 { role: "user", content: msg.body }
             ],
+            max_tokens: 500
         });
 
-        const replyText = completion.choices[0].message.content;
-
-        if (replyText) {
-            await msg.reply(replyText);
-            console.log(`Replied to ${msg.from}`);
-        }
+        const reply = completion.choices[0].message.content;
+        await msg.reply(reply);
+        console.log(`📤 Replied to ${msg.from}`);
+        
     } catch (err) {
-        console.error('OpenAI error:', err.message);
+        console.error('⚠️ Error processing message:', err.message);
     }
 });
 
 client.initialize();
 
-// --- Routes ---
+// --- Keep-Alive & Monitoring ---
+
+// Log memory every 5 mins to help debug Railway crashes
+setInterval(() => {
+    const used = process.memoryUsage().heapUsed / 1024 / 1024;
+    console.log(`📊 Memory Usage: ${Math.round(used * 100) / 100} MB | Ready: ${isReady}`);
+}, 300000);
+
 app.get('/qr', (req, res) => {
-    if (isReady) return res.send('<h2>Already authenticated ✅</h2>');
-    if (!qrImageData) return res.send('<h2>Waiting for QR code...</h2>');
-    res.send(`<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;"><div><h2>Scan with WhatsApp</h2><img src="${qrImageData}" /></div></body></html>`);
+    if (isReady) return res.send('<h2>Bot is already connected! ✅</h2>');
+    if (!qrImageData) return res.send('<h2>Generating QR... Please refresh in 5 seconds.</h2>');
+    res.send(`<html><body style="text-align:center;font-family:sans-serif;padding-top:50px;">
+        <h2>Scan with WhatsApp</h2>
+        <img src="${qrImageData}" style="border:1px solid #ddd; padding:10px; border-radius:10px;"/>
+        <p>This page will expire. Refresh to update.</p>
+    </body></html>`);
 });
 
-app.get('/status', (req, res) => res.json({ ready: isReady }));
+app.get('/', (req, res) => res.send('Bot is running. Visit /qr to link.'));
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
