@@ -8,7 +8,7 @@ app.use(express.json());
 
 let qrImageData = null;
 let isReady = false;
-const bootTime = Math.floor(Date.now() / 1000);
+let acceptMessages = false; // Cold start protector
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -25,93 +25,90 @@ const client = new Client({
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
+            '--single-process',
             '--no-zygote',
-            '--single-process', // Saves memory
             '--disable-gpu'
         ]
     }
 });
 
-// --- Event Handlers ---
-
 client.on('qr', (qr) => {
-    qrcode.toDataURL(qr).then(url => {
-        qrImageData = url;
-        console.log('--- NEW QR GENERATED ---');
-    });
+    qrcode.toDataURL(qr).then(url => { qrImageData = url; });
+    console.log('New QR code generated.');
 });
 
 client.on('ready', () => {
     isReady = true;
     qrImageData = null;
-    console.log('✅ Bot is online and listening for messages');
+    console.log('✅ Bot connected. Waiting 15s for sync to finish...');
+    
+    // COLD START PROTECTOR: 
+    // Ignore all messages for 15 seconds so old history doesn't trigger the bot.
+    setTimeout(() => {
+        acceptMessages = true;
+        console.log('🚀 READY: Now accepting NEW messages only.');
+    }, 15000); 
 });
-
-client.on('authenticated', () => console.log('👍 Authenticated with WhatsApp'));
-
-client.on('auth_failure', msg => console.error('❌ Auth failure:', msg));
-
-client.on('disconnected', (reason) => {
-    isReady = false;
-    console.log('🔌 Client disconnected, restarting...', reason);
-    client.initialize(); // Try to reconnect
-});
-
-// --- Chat Logic ---
 
 client.on('message', async (msg) => {
-    // Basic Filters
+    // 1. Check if bot is fully synced and ready
+    if (!acceptMessages) return;
+
+    // 2. Ignore messages from the bot itself
     if (msg.fromMe) return;
-    if (msg.isStatus || msg.from === 'status@broadcast') return;
-    if (msg.from.includes('@g.us')) return; 
-    
-    // Ignore old messages (with 5 second buffer)
-    if (msg.timestamp < (bootTime - 5)) return;
+
+    // 3. STRICT GROUP FILTER: Check both .from and .id.remote
+    if (msg.from.endsWith('@g.us') || msg.id.remote.endsWith('@g.us') || msg.author) {
+        return; 
+    }
+
+    // 4. STRICT STATUS FILTER
+    if (msg.isStatus || msg.from === 'status@broadcast' || msg.from.includes('broadcast')) {
+        return;
+    }
+
+    // 5. IGNORE SYSTEM MESSAGES (like "Messages are end-to-end encrypted")
+    if (msg.type !== 'chat') return;
+
+    console.log(`📩 Processing message from: ${msg.from}`);
 
     try {
-        console.log(`📩 New message from ${msg.from}`);
-        
         const completion = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
-                { role: "system", content: "You are a helpful assistant." },
+                { role: "system", content: "You are a direct and helpful WhatsApp assistant. Keep responses brief." },
                 { role: "user", content: msg.body }
             ],
-            max_tokens: 500
+            max_tokens: 400
         });
 
         const reply = completion.choices[0].message.content;
         await msg.reply(reply);
-        console.log(`📤 Replied to ${msg.from}`);
-        
+        console.log(`📤 Successfully replied to ${msg.from}`);
+
     } catch (err) {
-        console.error('⚠️ Error processing message:', err.message);
+        if (err.message.includes('insufficient_quota')) {
+            console.error('❌ OpenAI Error: Out of credits!');
+        } else {
+            console.error('⚠️ OpenAI Error:', err.message);
+        }
     }
+});
+
+client.on('disconnected', () => {
+    isReady = false;
+    acceptMessages = false;
+    console.log('Disconnected. Re-initializing...');
+    client.initialize();
 });
 
 client.initialize();
 
-// --- Keep-Alive & Monitoring ---
-
-// Log memory every 5 mins to help debug Railway crashes
-setInterval(() => {
-    const used = process.memoryUsage().heapUsed / 1024 / 1024;
-    console.log(`📊 Memory Usage: ${Math.round(used * 100) / 100} MB | Ready: ${isReady}`);
-}, 300000);
-
+// Routes
 app.get('/qr', (req, res) => {
-    if (isReady) return res.send('<h2>Bot is already connected! ✅</h2>');
-    if (!qrImageData) return res.send('<h2>Generating QR... Please refresh in 5 seconds.</h2>');
-    res.send(`<html><body style="text-align:center;font-family:sans-serif;padding-top:50px;">
-        <h2>Scan with WhatsApp</h2>
-        <img src="${qrImageData}" style="border:1px solid #ddd; padding:10px; border-radius:10px;"/>
-        <p>This page will expire. Refresh to update.</p>
-    </body></html>`);
+    if (isReady) return res.send('Connected ✅');
+    if (!qrImageData) return res.send('Loading QR...');
+    res.send(`<img src="${qrImageData}">`);
 });
 
-app.get('/', (req, res) => res.send('Bot is running. Visit /qr to link.'));
-
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
+app.listen(process.env.PORT || 8080);
