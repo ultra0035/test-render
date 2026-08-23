@@ -6,9 +6,8 @@ const OpenAI = require('openai');
 const app = express();
 app.use(express.json());
 
-// 1. CAPTURE START TIME IMMEDIATELY
-// This ensures we ignore EVERY message sent before this exact second.
-const botStartTime = Math.floor(Date.now() / 1000);
+// Buffer the start time by 5 seconds to account for server clock drift
+const botStartTime = Math.floor(Date.now() / 1000) - 5;
 
 let qrImageData = null;
 let isReady = false;
@@ -16,7 +15,8 @@ let isReady = false;
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: '/app/.wwebjs_auth' }),
+    // MATCHING YOUR RAILWAY MOUNT PATH:
+    authStrategy: new LocalAuth({ dataPath: '/data/.wwebjs_auth' }),
     webVersionCache: {
         type: 'remote',
         remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2413.51-v2.html', 
@@ -39,44 +39,44 @@ client.on('ready', () => {
     console.log('✅ Bot is online and monitoring...');
 });
 
-// --- THE LOGIC ENGINE ---
 client.on('message', async (msg) => {
+    // DEBUG: This will show in logs for EVERY message that arrives
+    console.log(`--- New Event from ${msg.from} ---`);
+
     try {
-        // A. IGNORE MESSAGES BEFORE SESSION START
-        // If message was sent even 1 second before the bot turned on, ignore it.
+        // 1. IGNORE OLD MESSAGES
         if (msg.timestamp < botStartTime) {
+            console.log('Skipping: Message sent before bot started.');
             return;
         }
 
-        // B. IGNORE MESSAGES FROM SELF
+        // 2. IGNORE SELF
         if (msg.fromMe) return;
 
-        // C. IGNORE STATUS UPDATES (STORIES)
-        if (msg.isStatus || msg.from === 'status@broadcast' || msg.id.remote === 'status@broadcast') {
+        // 3. IGNORE STATUS/STORIES
+        if (msg.isStatus || msg.from === 'status@broadcast') {
+            console.log('Skipping: Status update.');
             return;
         }
 
-        // D. IGNORE GROUPS (MULTIPLE CHECKS)
-        // Checks the ID suffix and the group participant author flag
-        if (msg.from.endsWith('@g.us') || msg.id.remote.endsWith('@g.us') || msg.author) {
+        // 4. IGNORE GROUPS (Check suffix and author flag)
+        if (msg.from.endsWith('@g.us') || msg.author) {
+            console.log('Skipping: Group message.');
             return;
         }
 
-        // E. IGNORE BROADCAST LISTS
-        if (msg.broadcast || msg.from.endsWith('@broadcast')) {
+        // 5. IGNORE NON-TEXT (Images, system alerts, etc)
+        if (msg.type !== 'chat') {
+            console.log(`Skipping: Message type is ${msg.type}`);
             return;
         }
 
-        // F. ONLY ALLOW TEXT MESSAGES (CHATS)
-        if (msg.type !== 'chat') return;
-
-        // If it passed all these filters, it's a real private message.
-        console.log(`📩 Valid DM from ${msg.from}: ${msg.body}`);
+        console.log(`📩 VALID DM: ${msg.body}`);
 
         const completion = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
-                { role: "system", content: "You are a helpful assistant. Keep it brief." },
+                { role: "system", content: "You are a helpful assistant." },
                 { role: "user", content: msg.body }
             ],
             max_tokens: 500
@@ -87,24 +87,21 @@ client.on('message', async (msg) => {
         console.log(`📤 Replied to ${msg.from}`);
 
     } catch (err) {
-        console.error('Processing Error:', err.message);
+        console.error('Error processing message:', err.message);
     }
 });
 
 client.on('disconnected', () => {
-    console.log('Disconnected. Killing process to trigger Railway restart...');
+    console.log('Disconnected. Restarting...');
     process.exit(1); 
 });
 
 client.initialize();
 
-// Routes
 app.get('/qr', (req, res) => {
     if (isReady) return res.send('Connected ✅');
-    if (!qrImageData) return res.send('Loading QR... Refresh soon.');
+    if (!qrImageData) return res.send('Loading QR...');
     res.send(`<img src="${qrImageData}">`);
 });
-
-app.get('/status', (req, res) => res.json({ ready: isReady }));
 
 app.listen(process.env.PORT || 8080);
