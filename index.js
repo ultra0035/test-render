@@ -39,9 +39,12 @@ let acceptMessages = false;
 
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: sessionPath }),
+    // FIX: was pinned to a remote alpha WhatsApp Web build, which is the
+    // most common cause of "connects but never receives DM events."
+    // 'local' lets whatsapp-web.js cache whatever stable version it pulls
+    // from WhatsApp's own servers on first run.
     webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1012111007-alpha.html',
+        type: 'local',
     },
     puppeteer: {
         headless: true,
@@ -64,6 +67,30 @@ client.on('ready', () => {
         console.log('🚀 MONITORING ACTIVE: Ignoring Groups, Status, and Old Messages.');
     }, 10000);
 });
+
+// --- ADDED: visibility into silent failures ---
+client.on('change_state', state => console.log('🔄 State:', state));
+client.on('auth_failure', msg => console.log('❌ Auth failure:', msg));
+client.on('disconnected', (reason) => {
+    console.log('❌ Disconnected:', reason);
+    process.exit(1);
+});
+
+// --- ADDED: watchdog — force restart if the session goes stale ---
+setInterval(async () => {
+    if (!isReady) return;
+    try {
+        const state = await client.getState();
+        console.log('💓 Heartbeat state:', state);
+        if (state !== 'CONNECTED') {
+            console.log('🚨 Not connected, forcing restart');
+            process.exit(1);
+        }
+    } catch (e) {
+        console.log('🚨 getState failed, forcing restart:', e.message);
+        process.exit(1);
+    }
+}, 60000);
 
 // --- THE FILTERS ---
 client.on('message', async (msg) => {
@@ -88,8 +115,6 @@ client.on('message', async (msg) => {
         console.error('OpenAI Error:', err.message);
     }
 });
-
-client.on('disconnected', () => process.exit(1));
 
 client.initialize();
 
