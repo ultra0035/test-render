@@ -6,9 +6,12 @@ const OpenAI = require('openai');
 const app = express();
 app.use(express.json());
 
+// 1. CAPTURE START TIME IMMEDIATELY
+// This ensures we ignore EVERY message sent before this exact second.
+const botStartTime = Math.floor(Date.now() / 1000);
+
 let qrImageData = null;
 let isReady = false;
-let acceptMessages = false; // Cold start protector
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -16,19 +19,12 @@ const client = new Client({
     authStrategy: new LocalAuth({ dataPath: '/app/.wwebjs_auth' }),
     webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2413.51-v2.html', 
     },
     puppeteer: {
         headless: true,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--single-process',
-            '--no-zygote',
-            '--disable-gpu'
-        ]
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     }
 });
 
@@ -40,66 +36,64 @@ client.on('qr', (qr) => {
 client.on('ready', () => {
     isReady = true;
     qrImageData = null;
-    console.log('✅ Bot connected. Waiting 15s for sync to finish...');
-    
-    // COLD START PROTECTOR: 
-    // Ignore all messages for 15 seconds so old history doesn't trigger the bot.
-    setTimeout(() => {
-        acceptMessages = true;
-        console.log('🚀 READY: Now accepting NEW messages only.');
-    }, 15000); 
+    console.log('✅ Bot is online and monitoring...');
 });
 
+// --- THE LOGIC ENGINE ---
 client.on('message', async (msg) => {
-    // 1. Check if bot is fully synced and ready
-    if (!acceptMessages) return;
-
-    // 2. Ignore messages from the bot itself
-    if (msg.fromMe) return;
-
-    // 3. STRICT GROUP FILTER: Check both .from and .id.remote
-    if (msg.from.endsWith('@g.us') || msg.id.remote.endsWith('@g.us') || msg.author) {
-        return; 
-    }
-
-    // 4. STRICT STATUS FILTER
-    if (msg.isStatus || msg.from === 'status@broadcast' || msg.from.includes('broadcast')) {
-        return;
-    }
-
-    // 5. IGNORE SYSTEM MESSAGES (like "Messages are end-to-end encrypted")
-    if (msg.type !== 'chat') return;
-
-    console.log(`📩 Processing message from: ${msg.from}`);
-
     try {
+        // A. IGNORE MESSAGES BEFORE SESSION START
+        // If message was sent even 1 second before the bot turned on, ignore it.
+        if (msg.timestamp < botStartTime) {
+            return;
+        }
+
+        // B. IGNORE MESSAGES FROM SELF
+        if (msg.fromMe) return;
+
+        // C. IGNORE STATUS UPDATES (STORIES)
+        if (msg.isStatus || msg.from === 'status@broadcast' || msg.id.remote === 'status@broadcast') {
+            return;
+        }
+
+        // D. IGNORE GROUPS (MULTIPLE CHECKS)
+        // Checks the ID suffix and the group participant author flag
+        if (msg.from.endsWith('@g.us') || msg.id.remote.endsWith('@g.us') || msg.author) {
+            return;
+        }
+
+        // E. IGNORE BROADCAST LISTS
+        if (msg.broadcast || msg.from.endsWith('@broadcast')) {
+            return;
+        }
+
+        // F. ONLY ALLOW TEXT MESSAGES (CHATS)
+        if (msg.type !== 'chat') return;
+
+        // If it passed all these filters, it's a real private message.
+        console.log(`📩 Valid DM from ${msg.from}: ${msg.body}`);
+
         const completion = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
-                { role: "system", content: "You are a direct and helpful WhatsApp assistant. Keep responses brief." },
+                { role: "system", content: "You are a helpful assistant. Keep it brief." },
                 { role: "user", content: msg.body }
             ],
-            max_tokens: 400
+            max_tokens: 500
         });
 
         const reply = completion.choices[0].message.content;
         await msg.reply(reply);
-        console.log(`📤 Successfully replied to ${msg.from}`);
+        console.log(`📤 Replied to ${msg.from}`);
 
     } catch (err) {
-        if (err.message.includes('insufficient_quota')) {
-            console.error('❌ OpenAI Error: Out of credits!');
-        } else {
-            console.error('⚠️ OpenAI Error:', err.message);
-        }
+        console.error('Processing Error:', err.message);
     }
 });
 
 client.on('disconnected', () => {
-    isReady = false;
-    acceptMessages = false;
-    console.log('Disconnected. Re-initializing...');
-    client.initialize();
+    console.log('Disconnected. Killing process to trigger Railway restart...');
+    process.exit(1); 
 });
 
 client.initialize();
@@ -107,8 +101,10 @@ client.initialize();
 // Routes
 app.get('/qr', (req, res) => {
     if (isReady) return res.send('Connected ✅');
-    if (!qrImageData) return res.send('Loading QR...');
+    if (!qrImageData) return res.send('Loading QR... Refresh soon.');
     res.send(`<img src="${qrImageData}">`);
 });
+
+app.get('/status', (req, res) => res.json({ ready: isReady }));
 
 app.listen(process.env.PORT || 8080);
