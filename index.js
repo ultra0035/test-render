@@ -1,45 +1,43 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
+const express = require('express');
+const qrcode = require('qrcode');
 
-async function connect() {
-    // Mount your volume to /data
+const app = express();
+let qrImageUrl = '';
+
+async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('/data/baileys_auth');
 
     const sock = makeWASocket({
         logger: pino({ level: 'silent' }),
         auth: state,
-        printQRInTerminal: false 
+        printQRInTerminal: false // <--- THIS STOPS THE ASCII BLOCKS
     });
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, qr } = update;
         
         if (qr) {
-            qrcode.generate(qr, { small: true });
+            // Generate a real image you can scan
+            qrImageUrl = await qrcode.toDataURL(qr);
         }
-
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) connect();
-        } else if (connection === 'open') {
-            console.log('✅ Connected');
+        if (connection === 'open') {
+            qrImageUrl = 'Connected';
+            console.log('✅ Bot Connected');
         }
     });
 
     sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('messages.upsert', async (m) => {
-        const msg = m.messages[0];
-        if (!msg.message || msg.key.fromMe) return;
-        
-        const sender = msg.key.remoteJid;
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-        
-        console.log(`📩 ${sender}: ${text}`);
-        
-        await sock.sendMessage(sender, { text: 'Bot is active.' });
-    });
 }
 
-connect();
+// Serve the QR code on a web page
+app.get('/qr', (req, res) => {
+    if (qrImageUrl === 'Connected') return res.send('<h1>Connected ✅</h1>');
+    if (!qrImageUrl) return res.send('<h1>Loading QR... Refresh in 5 seconds.</h1>');
+    res.send(`<h1>Scan this:</h1><img src="${qrImageUrl}">`);
+});
+
+app.listen(8080, () => console.log('Web server running on port 8080'));
+
+startBot();
