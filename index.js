@@ -23,10 +23,26 @@ async function startBot() {
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         if (qr) qrImageUrl = await qrcode.toDataURL(qr);
-        if (connection === 'open') qrImageUrl = 'Connected';
+        if (connection === 'open') {
+            qrImageUrl = 'Connected';
+            console.log('✅ Bot Connected');
+        }
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) setTimeout(startBot, 5000);
+        }
+    });
+
+    sock.ev.on('messages.upsert', async (m) => {
+        const msg = m.messages[0];
+        if (!msg.message || msg.key.fromMe || m.type !== 'notify') return;
+
+        const remoteJid = msg.key.remoteJid;
+        if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') return;
+
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
+        if (text) {
+            console.log(`📩 DM from ${remoteJid}: ${text}`);
         }
     });
 }
