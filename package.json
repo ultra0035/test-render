@@ -1,11 +1,10 @@
 {
-  "name": "whatsapp-railway",
+  "name": "baileys-railway",
   "version": "1.0.0",
   "main": "index.js",
   "dependencies": {
-    "express": "^4.19.2",
-    "qrcode": "^1.5.3",
-    "whatsapp-web.js": "^1.25.0",
-    "openai": "^4.55.0"
+    "@whiskeysockets/baileys": "^6.7.8",
+    "pino": "^9.0.0",
+    "qrcode-terminal": "^0.12.0"
   }
 }
