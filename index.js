@@ -2,9 +2,12 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const pino = require('pino');
 const express = require('express');
 const qrcode = require('qrcode');
+const OpenAI = require('openai');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const botStartTime = Math.floor(Date.now() / 1000);
 
 let qrImageUrl = '';
 let sock;
@@ -35,14 +38,32 @@ async function startBot() {
 
     sock.ev.on('messages.upsert', async (m) => {
         const msg = m.messages[0];
+        
+        // 1. Ignore if from self, no message, or not a "notify" message
         if (!msg.message || msg.key.fromMe || m.type !== 'notify') return;
 
+        // 2. Ignore messages from before the bot started
+        if (msg.messageTimestamp < botStartTime) return;
+
+        // 3. Ignore Groups and Status
         const remoteJid = msg.key.remoteJid;
         if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') return;
 
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-        if (text) {
-            console.log(`📩 DM from ${remoteJid}: ${text}`);
+        if (!text) return;
+
+        console.log(`📩 DM from ${remoteJid}: ${text}`);
+
+        try {
+            const completion = await openai.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [{ role: "user", content: text }],
+            });
+
+            await sock.sendMessage(remoteJid, { text: completion.choices[0].message.content });
+            console.log(`📤 Replied to ${remoteJid}`);
+        } catch (err) {
+            console.error('OpenAI Error:', err.message);
         }
     });
 }
